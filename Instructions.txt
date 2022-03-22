@@ -1,0 +1,30 @@
+
+Original repo: https://github.com/nrupatunga/goturn-pytorch
+
+Testing instructions
+  - Retrive pretrained model and put model inside checkpoints folder:
+  src/goturn/models/caffenet/ligthning_logs/version_0/checkpoints/
+  
+  - from /src
+  
+  	source settings.sh
+
+  - select video sequence by setting the path in 'demo_folder.sh' for frames and masks.
+
+  - then run from /src/scripts
+  	
+  	bash demo_folder.sh
+
+
+To convert bmp to jpg use where there are bmp files
+  
+  - $ mogrify -format jpg *.bmp
+
+
+---------------------------------------------------- 16/03/2022
+
+added attribute for masks images in goturn tracker
+
+added estimation of bbox from png masks
+
+added initialization of bbox from first mask
