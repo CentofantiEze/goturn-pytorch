@@ -5,3 +5,5 @@ tags
 lightning_logs
 
 src/goturn/models/pretrained/fc_init.npy
+.DS_Store
+.gitignore

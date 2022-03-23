@@ -17,16 +17,12 @@ import torch
 from loguru import logger
 from train import GoturnTrain
 
-try:
-    from goturn.helper import image_io
-    from goturn.helper.vis_utils import Visualizer
-    from goturn.helper.image_io import resize
-    from goturn.helper.BoundingBox import BoundingBox
-    from goturn.helper.image_proc import cropPadImage
-    from goturn.helper.draw_util import draw
-except ImportError:
-    logger.error('Please run $source settings.sh from root directory')
-    sys.exit(1)
+from helper import image_io
+from helper.vis_utils import Visualizer
+from helper.image_io import resize
+from helper.BoundingBox import BoundingBox
+from helper.image_proc import cropPadImage
+from helper.draw_util import draw
 
 
 refPt = []
@@ -218,6 +214,95 @@ class GoturnTracker:
         bbox = BoundingBox(x1-d_px, y1-d_px, x2+d_px, y2+d_px)
         return bbox
 
+    def preprocessing(self, frame_prev, frame_curr, bbox, pix_oversize=10):
+
+        #crop the image to the bounding box
+        box = frame_prev[bbox.y1:bbox.y2,bbox.x1:bbox.x2,:]
+
+        hsv = cv2.cvtColor(box, cv2.COLOR_BGR2HSV)
+
+        hsv_rs = np.reshape(hsv, (hsv.shape[0]*hsv.shape[1],hsv.shape[2]))
+
+        hist, edges = np.histogramdd(hsv_rs, bins=(5,5,5))
+
+        max1 = np.unravel_index(hist.argmax(), hist.shape)
+        hist[max1] = 0
+
+        lower1 = np.array([edges[0][max1[0]], edges[1][max1[1]], edges[2][max1[2]]])
+        upper1 = np.array([edges[0][max1[0]+1], edges[1][max1[1]+1], edges[2][max1[2]+1]])
+
+        max2 = np.unravel_index(hist.argmax(), hist.shape)
+        hist[max2] = 0
+
+        lower2 = np.array([edges[0][max2[0]], edges[1][max2[1]], edges[2][max2[2]]])
+        upper2 = np.array([edges[0][max2[0]+1], edges[1][max2[1]+1], edges[2][max2[2]+1]])
+
+        max3 = np.unravel_index(hist.argmax(), hist.shape)
+        hist[max3] = 0
+
+        lower3 = np.array([edges[0][max3[0]], edges[1][max3[1]], edges[2][max3[2]]])
+        upper3 = np.array([edges[0][max3[0]+1], edges[1][max3[1]+1], edges[2][max3[2]+1]])
+
+        max4 = np.unravel_index(hist.argmax(), hist.shape)
+        hist[max4] = 0
+
+        lower4 = np.array([edges[0][max4[0]], edges[1][max4[1]], edges[2][max4[2]]])
+        upper4 = np.array([edges[0][max4[0]+1], edges[1][max4[1]+1], edges[2][max4[2]+1]])
+
+        #convert the BGR image to HSV colour space
+        hsv = cv2.cvtColor(frame_curr, cv2.COLOR_BGR2HSV)
+        #obtain the grayscale image of the original image
+        gray = cv2.cvtColor(frame_curr, cv2.COLOR_BGR2GRAY)
+        #gray = frame_curr
+
+        #create a mask using the bounds set
+        mask1 = cv2.inRange(hsv, lower1, upper1)
+        #create a mask using the bounds set
+        mask2 = cv2.inRange(hsv, lower2, upper2)   
+        #create a mask using the bounds set
+        mask3 = cv2.inRange(hsv, lower3, upper3)
+        #create a mask using the bounds set
+        mask4 = cv2.inRange(hsv, lower4, upper4)
+
+        mask12 = cv2.bitwise_or(mask1,mask2) 
+        #mask34 = cv2.bitwise_or(mask3,mask4)
+        mask = mask12
+
+        maske = np.copy(mask)
+        maske[bbox.y1-pix_oversize:bbox.y2+pix_oversize,bbox.x1-pix_oversize:bbox.x2+pix_oversize] = int(255)
+        mask = maske
+
+        #gray = cv2.blur(gray,(7,7))
+
+        #create an inverse of the mask
+        mask_inv = cv2.bitwise_not(mask)
+        #Filter only the selected colour from the original image using the mask(foreground)
+        res = cv2.bitwise_and(frame_curr, frame_curr, mask=mask)
+        #Filter the regions containing colours other than red from the grayscale image(background)
+        background = cv2.bitwise_and(gray, gray, mask = mask_inv)
+        #convert the one channelled grayscale background to a three channelled image
+        background = np.stack((background,)*3, axis=-1)
+        #add the foreground and the background
+        added_img = cv2.add(res, background)   
+
+        #display the images
+        #cv2.imshow("back", background)
+        #cv2.imshow("mask_inv", mask_inv)
+        #cv2.imshow("added",added_img)
+        #cv2.imshow("mask", mask)
+        #cv2.imshow("gray", gray)
+        #cv2.imshow("hsv", hsv)
+        #cv2.imshow("res", res) 
+
+        #im = Image.fromarray(np.uint8(frame_curr)).convert('RGB')
+
+        #converter = ImageEnhance.Contrast(im)
+        #im = converter.enhance(1.5)
+
+        #added_img = np.array(im)
+        
+        return added_img
+
     def bb_intersection_over_union(self, boxA, boxB):
         # determine the (x, y)-coordinates of the intersection rectangle
         xA = max(boxA.x1, boxB.x1)
@@ -236,7 +321,8 @@ class GoturnTracker:
         # compute the intersection over union by taking the intersection
         # area and dividing it by the sum of prediction + ground-truth
         # areas - the interesection area
-        iou = interArea / float(boxAArea + boxBArea - interArea)
+        # not iou but dice coefficient
+        iou = 2*interArea / float(boxAArea + boxBArea)# - interArea)
 
         # return the intersection over union value
         return iou
@@ -262,12 +348,16 @@ class GoturnTracker:
         
         frame_0 = image_io.load(f_path)
         prev = np.asarray(frame_0)#[::-1] #not working
+
+        # added, pop out main color in bbox
+        prev_mod = self.preprocessing(prev, prev, bbox_0)
+
         global image
         image = prev
 
         while True:
             # prev_out = cv2.cvtColor(prev, cv2.COLOR_RGB2BGR)
-            prev_out = np.copy(prev)
+            prev_out = np.copy(prev_mod)
             cv2.imshow('image', prev_out)
 
 
@@ -289,6 +379,8 @@ class GoturnTracker:
                 #bbox_0 = BoundingBox(x1, y1, x2, y2)
                 break
         
+        centroid_metric = []
+        DICE_metric = []
 
         for i in range(1, num_frames):
             f_path = vid_frames[i]
@@ -300,13 +392,19 @@ class GoturnTracker:
             bbox_true = self.get_bb(np.asarray(mask_1), pix_oversize=0)
             
             curr = np.asarray(frame_1)#[::-1]
-            bbox_0 = self._track(curr, prev, bbox_0)
+
+            curr_mod = self.preprocessing(prev, curr, bbox_0)
+
+            bbox_0 = self._track(curr_mod, prev, bbox_0)
             bbox = bbox_0
             prev = curr
 
-            IOU_val = self.bb_intersection_over_union(bbox_true, bbox)
+            DICE_val = self.bb_intersection_over_union(bbox_true, bbox)
             centroid_dist = self.bb_centroid_dist(bbox_true, bbox)
             print(centroid_dist)
+
+            centroid_metric.append(centroid_dist)
+            DICE_metric.append(DICE_val)
 
             if cv2.waitKey(1) & 0xFF == ord('p'):
                 while True:
@@ -318,7 +416,7 @@ class GoturnTracker:
                         bbox_0 = BoundingBox(x1, y1, x2, y2)
                         break
 
-            curr_dbg = np.copy(curr)
+            curr_dbg = np.copy(curr_mod)
             curr_dbg = cv2.rectangle(curr_dbg, (int(bbox.x1),
                                                 int(bbox.y1)),
                                      (int(bbox.x2), int(bbox.y2)), (255, 255, 0), 2)
@@ -331,6 +429,9 @@ class GoturnTracker:
             cv2.imshow('image', curr_dbg)
             # cv2.imwrite('./output/{:04d}.png'.format(i), curr_dbg)
             cv2.waitKey(20)
+
+        np.save('team8_octopus_dice_metric.npy', np.array(DICE_metric))
+        np.save('team8_octopus_centroids_metric.npy', np.array(centroid_metric))
 
 
 if __name__ == "__main__":
